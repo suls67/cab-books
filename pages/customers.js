@@ -18,10 +18,19 @@ function CloseIcon() {
   )
 }
 
-function DotsIcon() {
+function EditIcon() {
   return (
-    <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-      <circle cx="10" cy="4" r="1.5" /><circle cx="10" cy="10" r="1.5" /><circle cx="10" cy="16" r="1.5" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="15" height="15">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  )
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="15" height="15">
+      <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4h6v2" />
     </svg>
   )
 }
@@ -38,7 +47,6 @@ export default function Customers() {
   const [form, setForm] = useState(BLANK_FORM)
   const [isSaving, setIsSaving] = useState(false)
   const [formError, setFormError] = useState('')
-  const [openMenuId, setOpenMenuId] = useState(null)
 
   const loadCustomers = useCallback(async (driverId) => {
     const { data, error } = await supabase
@@ -62,13 +70,6 @@ export default function Customers() {
     }
     init()
   }, [router, loadCustomers])
-
-  useEffect(() => {
-    if (!openMenuId) return
-    function handleClickOutside() { setOpenMenuId(null) }
-    document.addEventListener('click', handleClickOutside)
-    return () => document.removeEventListener('click', handleClickOutside)
-  }, [openMenuId])
 
   function openAdd() {
     setEditing(null)
@@ -98,9 +99,14 @@ export default function Customers() {
   }
 
   async function handleSave() {
-    if (!form.name.trim()) { setFormError('Customer name is required.'); return }
+    if (!form.name.trim()) {
+      setFormError('Customer name is required.')
+      return
+    }
+
     setIsSaving(true)
     setFormError('')
+
     const payload = {
       driver_id: driver.id,
       name: form.name.trim(),
@@ -110,14 +116,17 @@ export default function Customers() {
       area: form.area.trim() || null,
       notes: form.notes.trim() || null,
     }
+
     let error
     if (editing) {
       ;({ error } = await supabase.from('customers').update(payload).eq('id', editing.id))
     } else {
       ;({ error } = await supabase.from('customers').insert([{ ...payload, status: 'active' }]))
     }
+
     setIsSaving(false)
     if (error) { setFormError(`Could not save: ${error.message}`); return }
+
     closeModal()
     await loadCustomers(driver.id)
   }
@@ -135,53 +144,57 @@ export default function Customers() {
   }
 
   const visible = customers.filter(c => c.status === tab)
-  const activeCount = customers.filter(c => c.status === 'active').length
-  const inactiveCount = customers.filter(c => c.status === 'inactive').length
 
   return (
     <div className={styles.page}>
-
-      {/* Page header */}
       <div className={styles.pageHeader}>
         <div>
           <h1 className={styles.pageTitle}>Customers</h1>
           <p className={styles.pageSubtitle}>Set up and manage your customer list for invoicing.</p>
         </div>
-        <button className={styles.addBtn} onClick={openAdd}>Add customer</button>
+        <button className={styles.addBtn} onClick={openAdd}>+ Add a customer</button>
       </div>
 
-      {/* Tabs */}
+      {/* Active / Inactive tabs */}
       <div className={styles.tabs}>
-        <button className={`${styles.tab} ${tab === 'active' ? styles.tabActive : ''}`} onClick={() => setTab('active')}>
-          Active {activeCount > 0 && <span className={styles.tabBadge}>{activeCount}</span>}
+        <button
+          className={`${styles.tab} ${tab === 'active' ? styles.tabActive : ''}`}
+          onClick={() => setTab('active')}
+        >
+          Active
+          {customers.filter(c => c.status === 'active').length > 0 && (
+            <span className={styles.tabCount}>{customers.filter(c => c.status === 'active').length}</span>
+          )}
         </button>
-        <button className={`${styles.tab} ${tab === 'inactive' ? styles.tabActive : ''}`} onClick={() => setTab('inactive')}>
-          Inactive {inactiveCount > 0 && <span className={styles.tabBadge}>{inactiveCount}</span>}
+        <button
+          className={`${styles.tab} ${tab === 'inactive' ? styles.tabActive : ''}`}
+          onClick={() => setTab('inactive')}
+        >
+          Inactive
+          {customers.filter(c => c.status === 'inactive').length > 0 && (
+            <span className={styles.tabCount}>{customers.filter(c => c.status === 'inactive').length}</span>
+          )}
         </button>
       </div>
 
-      {/* Table */}
-      <div className={styles.tableWrap}>
+      {/* List */}
+      <div className={styles.listCard}>
         {visible.length > 0 ? (
-          <div className={styles.table}>
-            {/* Header */}
-            <div className={styles.tableHead}>
-              <div className={styles.colName}>Customer</div>
-              <div className={styles.colEmail}>Email address</div>
-              <div className={styles.colPhone}>Phone number</div>
-              <div className={styles.colArea}>Area</div>
+          <>
+            <div className={styles.listHeader}>
+              <div className={styles.colName}>Name</div>
               <div className={styles.colType}>Type</div>
-              <div className={styles.colActions}>Actions</div>
+              <div className={styles.colContact}>Phone</div>
+              <div className={styles.colArea}>Area</div>
+              <div className={styles.colActions} />
             </div>
-
-            {/* Rows */}
             {visible.map(c => (
-              <div key={c.id} className={styles.tableRow}>
+              <div key={c.id} className={styles.row}>
                 <div className={styles.colName}>
                   <div className={styles.avatar}>{getInitials(c.name)}</div>
-                  <div className={styles.nameBlock}>
+                  <div>
                     <div className={styles.customerName}>{c.name}</div>
-                    {/* Mobile only: type + phone + area */}
+                    {c.email && <div className={styles.customerEmail}>{c.email}</div>}
                     <div className={styles.mobileDetails}>
                       <span className={`${styles.typeBadge} ${styles[`type${c.type.replace(/\s+/g, '')}`]}`}>{c.type}</span>
                       {c.phone && <span className={styles.mobileDetailItem}>{c.phone}</span>}
@@ -189,55 +202,48 @@ export default function Customers() {
                     </div>
                   </div>
                 </div>
-                <div className={styles.colEmail}>{c.email || <span className={styles.dash}>—</span>}</div>
-                <div className={styles.colPhone}>{c.phone || <span className={styles.dash}>—</span>}</div>
-                <div className={styles.colArea}>{c.area || <span className={styles.dash}>—</span>}</div>
                 <div className={styles.colType}>
-                  <span className={`${styles.typeBadge} ${styles[`type${c.type.replace(/\s+/g, '')}`]}`}>{c.type}</span>
+                  <span className={`${styles.typeBadge} ${styles[`type${c.type.replace(/\s+/g, '')}`]}`}>
+                    {c.type}
+                  </span>
+                </div>
+                <div className={styles.colContact}>
+                  <span className={styles.phone}>{c.phone || '—'}</span>
+                </div>
+                <div className={styles.colArea}>
+                  <span className={styles.area}>{c.area || '—'}</span>
                 </div>
                 <div className={styles.colActions}>
-                  <div className={styles.menuWrap}>
-                    <button
-                      className={styles.menuBtn}
-                      onClick={e => { e.stopPropagation(); setOpenMenuId(openMenuId === c.id ? null : c.id) }}
-                    >
-                      <DotsIcon />
-                      <span>Actions</span>
-                    </button>
-                    {openMenuId === c.id && (
-                      <div className={styles.menuDropdown}>
-                        <button className={styles.menuItem} onClick={() => { openEdit(c); setOpenMenuId(null) }}>Edit</button>
-                        <button className={styles.menuItem} onClick={() => { handleToggleStatus(c); setOpenMenuId(null) }}>
-                          {c.status === 'active' ? 'Mark as inactive' : 'Mark as active'}
-                        </button>
-                        <div className={styles.menuDivider} />
-                        <button className={`${styles.menuItem} ${styles.menuItemDelete}`} onClick={() => { handleDelete(c.id); setOpenMenuId(null) }}>
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <button className={styles.actionBtn} onClick={() => openEdit(c)} title="Edit">
+                    <EditIcon />
+                  </button>
+                  <button
+                    className={styles.actionBtn}
+                    onClick={() => handleToggleStatus(c)}
+                    title={c.status === 'active' ? 'Mark inactive' : 'Mark active'}
+                  >
+                    {c.status === 'active' ? '⏸' : '▶'}
+                  </button>
+                  <button className={`${styles.actionBtn} ${styles.actionBtnDelete}`} onClick={() => handleDelete(c.id)} title="Delete">
+                    <TrashIcon />
+                  </button>
                 </div>
               </div>
             ))}
-
-            {/* Footer */}
-            <div className={styles.tableFooter}>
-              <span>{visible.length} {visible.length === 1 ? 'customer' : 'customers'}</span>
-            </div>
-          </div>
+          </>
         ) : (
           <div className={styles.emptyState}>
+            <div className={styles.emptyIcon}>👥</div>
             <div className={styles.emptyTitle}>
-              {tab === 'active' ? 'No customers yet' : 'No inactive customers'}
+              {tab === 'active' ? 'Add a customer to get started' : 'No inactive customers'}
             </div>
             <div className={styles.emptySub}>
               {tab === 'active'
-                ? 'Add your first customer to start creating invoices.'
+                ? 'This area will show a list of customers as you add them.'
                 : 'Customers you mark as inactive will appear here.'}
             </div>
             {tab === 'active' && (
-              <button className={styles.addBtn} onClick={openAdd}>Add customer</button>
+              <button className={styles.addBtn} onClick={openAdd}>+ Add a customer</button>
             )}
           </div>
         )}
@@ -256,19 +262,34 @@ export default function Customers() {
 
             <div className={styles.field}>
               <label className={styles.label}>Name <span className={styles.req}>*</span></label>
-              <input className={styles.input} type="text" placeholder="e.g. Heathrow Cars Ltd"
-                value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
+              <input
+                className={styles.input}
+                type="text"
+                placeholder="e.g. Heathrow Cars Ltd"
+                value={form.name}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                autoFocus
+              />
             </div>
 
             <div className={styles.fieldRow}>
               <div className={styles.field}>
                 <label className={styles.label}>Phone</label>
-                <input className={styles.input} type="tel" placeholder="07700 900000"
-                  value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+                <input
+                  className={styles.input}
+                  type="tel"
+                  placeholder="07700 900000"
+                  value={form.phone}
+                  onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+                />
               </div>
               <div className={styles.field}>
                 <label className={styles.label}>Type</label>
-                <select className={styles.select} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
+                <select
+                  className={styles.select}
+                  value={form.type}
+                  onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
+                >
                   {CUSTOMER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
@@ -276,21 +297,35 @@ export default function Customers() {
 
             <div className={styles.field}>
               <label className={styles.label}>Email</label>
-              <input className={styles.input} type="email" placeholder="billing@company.com"
-                value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+              <input
+                className={styles.input}
+                type="email"
+                placeholder="billing@company.com"
+                value={form.email}
+                onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+              />
             </div>
 
             <div className={styles.field}>
               <label className={styles.label}>Area / Pickup location</label>
-              <input className={styles.input} type="text" placeholder="e.g. Heathrow, Central London"
-                value={form.area} onChange={e => setForm(f => ({ ...f, area: e.target.value }))} />
+              <input
+                className={styles.input}
+                type="text"
+                placeholder="e.g. Heathrow, Central London"
+                value={form.area}
+                onChange={e => setForm(f => ({ ...f, area: e.target.value }))}
+              />
             </div>
 
             <div className={styles.field}>
               <label className={styles.label}>Notes <span className={styles.optional}>(optional)</span></label>
-              <textarea className={`${styles.input} ${styles.textarea}`}
+              <textarea
+                className={`${styles.input} ${styles.textarea}`}
                 placeholder="e.g. Always needs a receipt, wheelchair accessible vehicle"
-                value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} />
+                value={form.notes}
+                onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                rows={3}
+              />
             </div>
 
             <div className={styles.formActions}>
