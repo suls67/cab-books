@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import styles from '../styles/home.module.css'
 
 export default function Home() {
@@ -15,8 +16,12 @@ export default function Home() {
       </p>
 
       <div className={styles.buttons}>
-        <button className={styles.login}>Login</button>
-        <button className={styles.signup}>Sign Up Free</button>
+        <Link href="/login" className={styles.login}>
+          Login
+        </Link>
+        <Link href="/signup" className={styles.signup}>
+          Sign Up Free
+        </Link>
       </div>
 
       <div className={styles.cards}>

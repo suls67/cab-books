@@ -1,0 +1,5 @@
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS trips JSONB DEFAULT '[]';
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS bank_name TEXT;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS bank_account_name TEXT;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS bank_account_number TEXT;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS bank_sort_code TEXT;

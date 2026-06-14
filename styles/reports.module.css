@@ -1,0 +1,433 @@
+.page {
+  padding: 24px;
+  max-width: 1100px;
+}
+
+.loadingState {
+  padding: 48px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 0.9375rem;
+}
+
+/* ── Header ────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.pageTitle {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Period tabs */
+.periodTabs {
+  display: flex;
+  background: #f3f4f6;
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.periodTab {
+  height: 30px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.periodTab:hover {
+  color: #111827;
+}
+
+.periodTabActive {
+  background: #ffffff;
+  color: #111827;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Month / week prev-next navigation */
+.navPills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #f3f4f6;
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.navArrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.navArrow:hover:not(:disabled) {
+  background: #ffffff;
+  color: #111827;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.navArrow:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.navLabel {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #111827;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+/* Year dropdown */
+.yearSelect {
+  height: 36px;
+  padding: 0 36px 0 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 10px center;
+  font-size: 0.875rem;
+  color: #111827;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.yearSelect:focus {
+  outline: none;
+  border-color: #4ade80;
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.2);
+}
+
+/* ── Metric cards ──────────────────────────────────────────── */
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.metricCard {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 20px 24px;
+}
+
+.metricCardGreen {
+  border-left: 4px solid #4ade80;
+}
+
+.metricLabel {
+  font-size: 0.75rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.metricValue {
+  font-size: 1.625rem;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.colorIncome { color: #16a34a; }
+.colorExpense { color: #dc2626; }
+
+.metricSub {
+  font-size: 0.8125rem;
+  color: #9ca3af;
+}
+
+/* ── Card ──────────────────────────────────────────────────── */
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.cardTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #111827;
+  margin: 0 0 16px 0;
+}
+
+.cardHeader .cardTitle {
+  margin-bottom: 0;
+}
+
+/* ── Legend ────────────────────────────────────────────────── */
+
+.legend {
+  display: flex;
+  gap: 16px;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: #6b7280;
+}
+
+.legendDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legendDotIncome { background: #4ade80; }
+.legendDotExpense { background: #f87171; }
+
+/* ── Bar chart ─────────────────────────────────────────────── */
+
+.chartArea {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.barGroup {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 160px;
+}
+
+.bar {
+  width: 11px;
+  border-radius: 3px 3px 0 0;
+  transition: height 0.35s ease;
+}
+
+.barIncome { background: #4ade80; }
+.barExpense { background: #f87171; }
+
+.barLabel {
+  font-size: 0.6875rem;
+  color: #9ca3af;
+  user-select: none;
+}
+
+.barLabelHidden {
+  visibility: hidden;
+}
+
+/* Custom instant tooltip — replaces native title delay */
+.barTip {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+}
+
+.barTip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #111827;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  z-index: 10;
+}
+
+.barTip:hover::after {
+  opacity: 1;
+}
+
+/* Dense mode for month view (31 bars) */
+.chartAreaDense {
+  gap: 3px;
+}
+
+.chartAreaDense .bar {
+  width: 7px;
+}
+
+.chartAreaDense .barLabel {
+  font-size: 0.5625rem;
+}
+
+/* ── Two-column layout ─────────────────────────────────────── */
+
+.twoCol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.twoCol .card {
+  margin-bottom: 0;
+}
+
+/* ── Category breakdown ────────────────────────────────────── */
+
+.categoryList {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.categoryRow {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.catMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.catName {
+  font-size: 0.875rem;
+  color: #374151;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catAmount {
+  font-size: 0.875rem;
+  color: #111827;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.catBarTrack {
+  height: 6px;
+  background: #f3f4f6;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.catBarFill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+  min-width: 4px;
+}
+
+.catBarIncome { background: #4ade80; }
+.catBarExpense { background: #f87171; }
+
+.catPct {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  text-align: right;
+}
+
+.emptyCategories {
+  color: #9ca3af;
+  font-size: 0.875rem;
+  padding: 8px 0 4px;
+}
+
+/* ── Responsive ────────────────────────────────────────────── */
+
+@media (max-width: 860px) {
+  .twoCol {
+    grid-template-columns: 1fr;
+  }
+
+  .twoCol .card {
+    margin-bottom: 20px;
+  }
+
+  .twoCol .card:last-child {
+    margin-bottom: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 16px;
+  }
+
+  .metricGrid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .bar {
+    width: 8px;
+  }
+
+  .barLabel {
+    font-size: 0.625rem;
+  }
+
+  .chartArea {
+    gap: 3px;
+  }
+}

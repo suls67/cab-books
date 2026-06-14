@@ -2,8 +2,18 @@ import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { useEffect, useState } from 'react'
 import { getCurrentDriver } from '../lib/driverAuth'
+import { sortPeriods } from '../lib/hmrcPeriods'
 import { supabase } from '../supabaseClient'
 import styles from '../styles/hmrc.module.css'
+
+const isPeriodSubmitted = (period, submissionHistory) =>
+  submissionHistory.some(
+    (submission) =>
+      submission.period_start === period.start && submission.period_end === period.end
+  )
+
+const isPeriodFulfilled = (period, submissionHistory) =>
+  period.status === 'fulfilled' || isPeriodSubmitted(period, submissionHistory)
 
 export default function HmrcHome() {
   const router = useRouter()
@@ -117,8 +127,20 @@ export default function HmrcHome() {
       minute: '2-digit'
     }).format(new Date(value))
 
-  const openPeriods = obligations.filter((period) => period.status === 'open')
-  const fulfilledPeriods = obligations.filter((period) => period.status === 'fulfilled')
+  const formatDate = (value) =>
+    new Intl.DateTimeFormat('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    }).format(new Date(value))
+
+  const sortedObligations = sortPeriods(obligations)
+  const openPeriods = sortedObligations.filter(
+    (period) => !isPeriodFulfilled(period, submissionHistory)
+  )
+  const fulfilledPeriods = sortedObligations.filter(
+    (period) => isPeriodFulfilled(period, submissionHistory)
+  )
   const latestSubmission = submissionHistory[0]
 
   return (
@@ -185,7 +207,7 @@ export default function HmrcHome() {
             <div className={styles.metricCard}>
               <span className={styles.label}>Fulfilled obligations</span>
               <strong>{fulfilledPeriods.length}</strong>
-              <p>Periods HMRC already marks as submitted.</p>
+              <p>Periods already fulfilled in HMRC or saved in your app history.</p>
             </div>
 
             <div className={styles.metricCard}>
@@ -196,6 +218,18 @@ export default function HmrcHome() {
           </div>
 
           <div className={styles.taskGrid}>
+            <div className={styles.taskCard}>
+              <p className={styles.sectionEyebrow}>Sandbox setup</p>
+              <h2>Create test user</h2>
+              <p>
+                Generate a new HMRC sandbox individual with MTD Income Tax enrolled. Required to get
+                a NINO and businessId registered in the STATEFUL environment.
+              </p>
+              <Link href="/hmrc-create-test-user" className={styles.taskLink}>
+                Create test user
+              </Link>
+            </div>
+
             <div className={styles.taskCard}>
               <p className={styles.sectionEyebrow}>Step 1</p>
               <h2>Connect to HMRC</h2>
@@ -243,6 +277,42 @@ export default function HmrcHome() {
 
             <div className={styles.taskCard}>
               <p className={styles.sectionEyebrow}>Step 5</p>
+              <h2>Annual submission</h2>
+              <p>
+                Submit annual self-employment allowances, including investment allowance, as part
+                of the year-end journey.
+              </p>
+              <Link href="/hmrc-annual" className={styles.taskLink}>
+                Submit annual figures
+              </Link>
+            </div>
+
+            <div className={styles.taskCard}>
+              <p className={styles.sectionEyebrow}>Step 6</p>
+              <h2>Accounting adjustments</h2>
+              <p>
+                Trigger a business source adjustable summary (BSAS), review the summary, and submit
+                accounting adjustments.
+              </p>
+              <Link href="/hmrc-adjustments" className={styles.taskLink}>
+                Open adjustments
+              </Link>
+            </div>
+
+            <div className={styles.taskCard}>
+              <p className={styles.sectionEyebrow}>Step 7</p>
+              <h2>Income summary</h2>
+              <p>
+                Retrieve a year-to-date summary of income and expenditure as recorded by HMRC before
+                triggering a calculation.
+              </p>
+              <Link href="/hmrc-income-summary" className={styles.taskLink}>
+                View income summary
+              </Link>
+            </div>
+
+            <div className={styles.taskCard}>
+              <p className={styles.sectionEyebrow}>Step 8</p>
               <h2>Tax calculations</h2>
               <p>
                 Trigger an HMRC calculation, review any validation errors, and inspect the latest
@@ -250,6 +320,18 @@ export default function HmrcHome() {
               </p>
               <Link href="/hmrc-calculations" className={styles.taskLink}>
                 Open calculations
+              </Link>
+            </div>
+
+            <div className={styles.taskCard}>
+              <p className={styles.sectionEyebrow}>Step 9</p>
+              <h2>Final declaration</h2>
+              <p>
+                Submit your final declaration to HMRC — the equivalent of a Self Assessment tax
+                return. All quarterly and annual steps must be complete first.
+              </p>
+              <Link href="/hmrc-final" className={styles.taskLink}>
+                Open final declaration
               </Link>
             </div>
           </div>
@@ -274,7 +356,7 @@ export default function HmrcHome() {
                     className={styles.historyCard}
                   >
                     <span className={styles.label}>Submitted period</span>
-                    <strong>{submission.period_start} to {submission.period_end}</strong>
+                    <strong>{formatDate(submission.period_start)} to {formatDate(submission.period_end)}</strong>
                     <p>{formatDateTime(submission.submitted_at)}</p>
                   </div>
                 ))}

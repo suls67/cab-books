@@ -48,6 +48,19 @@ export default function ConnectHmrc() {
     loadDriver()
   }, [router])
 
+  const callbackStatus =
+    router.isReady && router.query.status === 'success'
+      ? {
+          type: 'success',
+          text: 'HMRC connected successfully. You can now move on to businesses, obligations, or calculations.'
+        }
+      : router.isReady && router.query.status === 'error'
+        ? {
+            type: 'error',
+            text: typeof router.query.message === 'string' ? router.query.message : 'HMRC connection failed.'
+          }
+        : null
+
   async function handleConnect() {
     setStatus({ type: '', text: '' })
     setIsLoading(true)
@@ -149,9 +162,11 @@ export default function ConnectHmrc() {
             </div>
           )}
 
-          {status.text && (
-            <div className={status.type === 'error' ? styles.error : styles.success}>
-              {status.text}
+          {(callbackStatus?.text || status.text) && (
+            <div
+              className={(callbackStatus?.type || status.type) === 'error' ? styles.error : styles.success}
+            >
+              {callbackStatus?.text || status.text}
             </div>
           )}
 

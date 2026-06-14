@@ -8,7 +8,7 @@ export default async function handler(req, res) {
   const redirectUri = process.env.HMRC_REDIRECT_URI;
 
   if (!driverId) {
-    return res.status(400).json({ error: 'Missing driver state from HMRC callback' });
+    return res.redirect('/connect-hmrc?status=error&message=Missing%20driver%20state%20from%20HMRC%20callback');
   }
 
   const tokenResponse = await fetch('https://test-api.service.hmrc.gov.uk/oauth/token', {
@@ -27,7 +27,8 @@ export default async function handler(req, res) {
   console.log('HMRC response:', data);
 
   if (!data.access_token) {
-  return res.status(500).json(data);
+    const message = encodeURIComponent(data?.error_description || data?.message || 'HMRC did not return an access token.');
+    return res.redirect(`/connect-hmrc?status=error&message=${message}`);
   }
 
   // Save one active token row per driver
@@ -42,7 +43,9 @@ export default async function handler(req, res) {
       onConflict: 'driver_id'
     });
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    return res.redirect(`/connect-hmrc?status=error&message=${encodeURIComponent(error.message)}`);
+  }
 
-  res.status(200).json(data);
+  return res.redirect('/connect-hmrc?status=success');
 }

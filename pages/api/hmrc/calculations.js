@@ -10,6 +10,18 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function parseJsonSafely(response) {
+  if (response.status === 204) return null;
+  return response.json().catch(() => null);
+}
+
+function getHmrcMeta(response) {
+  return {
+    hmrcStatusCode: response.status,
+    correlationId: response.headers.get('x-correlationid') || null
+  };
+}
+
 function getCalculationDisclaimer(calculationType, submissionDate) {
   if (calculationType === 'in-year' || calculationType === 'intent-to-finalise') {
     return `This calculation is based on information HMRC has received up to ${submissionDate}. It may change as more information is received.`;
@@ -22,7 +34,6 @@ function extractCalculationSummary(payload) {
   const incomeSources =
     payload?.incomeSources ||
     payload?.inputs ||
-    payload?.calculation ||
     null;
   const allowances =
     payload?.allowancesAndDeductions ||
@@ -30,23 +41,25 @@ function extractCalculationSummary(payload) {
     payload?.reliefs ||
     null;
   const taxDue =
-    payload?.taxCalculation?.totalIncomeTaxAndNicsDue ||
-    payload?.calculation?.taxDue ||
-    payload?.taxDue ||
+    payload?.calculation?.taxCalculation?.totalIncomeTaxAndNicsDue ??
+    payload?.taxCalculation?.totalIncomeTaxAndNicsDue ??
     null;
   const nic =
-    payload?.nationalInsuranceContributions?.totalNic ||
-    payload?.nic ||
-    payload?.taxCalculation?.totalNic ||
+    payload?.calculation?.taxCalculation?.nics?.totalNic ??
+    payload?.taxCalculation?.nics?.totalNic ??
     null;
-  const errors = payload?.errors || payload?.failures || payload?.messages || [];
+
+  // Validation errors live in messages.errors — check here first
+  const validationErrors = Array.isArray(payload?.messages?.errors) ? payload.messages.errors : [];
+  const hasValidationErrors = validationErrors.length > 0;
 
   return {
     taxDue: taxDue === null ? null : Number(taxDue),
     nic: nic === null ? null : Number(nic),
     incomeSources,
     allowances,
-    errors: Array.isArray(errors) ? errors : [errors]
+    hasValidationErrors,
+    errors: validationErrors
   };
 }
 
@@ -145,12 +158,13 @@ async function listCalculations(req, res, context) {
     context
   );
 
-  const payload = await response.json();
+  const payload = await parseJsonSafely(response);
 
   if (!response.ok) {
     return res.status(response.status).json({
-      error: payload.message || payload.error || 'Could not list HMRC calculations.',
-      details: payload
+      error: payload?.message || payload?.error || 'Could not list HMRC calculations.',
+      details: payload,
+      ...getHmrcMeta(response)
     });
   }
 
@@ -159,6 +173,14 @@ async function listCalculations(req, res, context) {
     taxYear,
     calculations: payload.calculations || payload || []
   });
+}
+
+async function saveCalculationRecord(values) {
+  await supabase
+    .from('hmrc_calculations')
+    .upsert([values], {
+      onConflict: 'calculation_id'
+    });
 }
 
 async function retrieveCalculation(req, res, context) {
@@ -180,51 +202,66 @@ async function retrieveCalculation(req, res, context) {
     context
   );
 
-  const payload = await response.json();
+  if (response.status === 404) {
+    return res.status(200).json({
+      status: 'pending',
+      calculationId,
+      calculationType,
+      ...getHmrcMeta(response)
+    });
+  }
+
+  const payload = await parseJsonSafely(response);
 
   if (!response.ok) {
     return res.status(response.status).json({
-      error: payload.message || payload.error || 'Could not retrieve HMRC calculation.',
-      details: payload
+      error: payload?.message || payload?.error || 'Could not retrieve HMRC calculation.',
+      details: payload,
+      ...getHmrcMeta(response)
     });
   }
 
   const summary = extractCalculationSummary(payload);
-  const status = summary.errors.length ? 'error' : 'complete';
-  const submissionDate = new Date().toISOString();
-  const disclaimer = getCalculationDisclaimer(calculationType, submissionDate);
+  const status = summary.hasValidationErrors ? 'error' : 'complete';
+  const submissionDate =
+    payload?.metadata?.calculationTimestamp ||
+    payload?.calculationTimestamp ||
+    new Date().toISOString();
+  const resolvedCalculationType = calculationType || payload?.calculationType || 'in-year';
+  const disclaimer = getCalculationDisclaimer(resolvedCalculationType, submissionDate);
 
-  await supabase
-    .from('hmrc_calculations')
-    .upsert([{
-      driver_id: context.driver.id,
-      tax_year: taxYear,
-      calculation_type: calculationType || payload?.calculationType || 'in-year',
-      calculation_id: calculationId,
-      status,
-      tax_due: summary.taxDue,
-      nic: summary.nic,
-      income_sources: summary.incomeSources,
-      allowances: summary.allowances,
-      submission_date: submissionDate,
-      errors: summary.errors,
-      disclaimer,
-      raw_response: payload,
-      updated_at: submissionDate
-    }], {
-      onConflict: 'calculation_id'
-    });
+  await saveCalculationRecord({
+    driver_id: context.driver.id,
+    tax_year: taxYear,
+    calculation_type: resolvedCalculationType,
+    calculation_id: calculationId,
+    status,
+    tax_due: summary.taxDue,
+    nic: summary.nic,
+    income_sources: summary.incomeSources,
+    allowances: summary.allowances,
+    submission_date: submissionDate,
+    errors: summary.errors,
+    disclaimer,
+    raw_response: payload,
+    updated_at: submissionDate
+  });
 
   return res.status(200).json({
     status,
     calculationId,
+    calculationType: resolvedCalculationType,
+    ...getHmrcMeta(response),
     taxDue: summary.taxDue,
     nic: summary.nic,
     incomeSources: summary.incomeSources,
     allowances: summary.allowances,
     submissionDate,
     errors: summary.errors,
-    disclaimer
+    disclaimer,
+    metadata: payload?.metadata || null,
+    calculation: payload?.calculation || null,
+    messages: payload?.messages || null
   });
 }
 
@@ -270,12 +307,13 @@ async function triggerCalculation(req, res, context) {
     context
   );
 
-  const triggerPayload = await triggerResponse.json();
+  const triggerPayload = await parseJsonSafely(triggerResponse);
 
   if (!triggerResponse.ok || !triggerPayload.calculationId) {
     return res.status(triggerResponse.status || 500).json({
-      error: triggerPayload.message || triggerPayload.error || 'Could not trigger HMRC calculation.',
-      details: triggerPayload
+      error: triggerPayload?.message || triggerPayload?.error || 'Could not trigger HMRC calculation.',
+      details: triggerPayload,
+      ...getHmrcMeta(triggerResponse)
     });
   }
 
@@ -283,21 +321,17 @@ async function triggerCalculation(req, res, context) {
   const submissionDate = new Date().toISOString();
   const disclaimer = getCalculationDisclaimer(calculationType, submissionDate);
 
-  await supabase
-    .from('hmrc_calculations')
-    .upsert([{
-      driver_id: context.driver.id,
-      tax_year: taxYear,
-      calculation_type: calculationType,
-      calculation_id: calculationId,
-      status: 'pending',
-      disclaimer,
-      raw_response: triggerPayload,
-      submission_date: submissionDate,
-      updated_at: submissionDate
-    }], {
-      onConflict: 'calculation_id'
-    });
+  await saveCalculationRecord({
+    driver_id: context.driver.id,
+    tax_year: taxYear,
+    calculation_type: calculationType,
+    calculation_id: calculationId,
+    status: 'pending',
+    disclaimer,
+    raw_response: triggerPayload,
+    submission_date: submissionDate,
+    updated_at: submissionDate
+  });
 
   await sleep(5000);
 
@@ -314,43 +348,55 @@ async function triggerCalculation(req, res, context) {
       context
     );
 
-    const retrievePayload = await retrieveResponse.json();
+    const pendingLike = retrieveResponse.status === 404;
 
-    if (!retrieveResponse.ok) {
-      const pendingLike = retrieveResponse.status === 404 || retrieveResponse.status === 202;
+    if (pendingLike && attempt < POLL_ATTEMPTS - 1) {
+      await sleep(POLL_DELAY_MS);
+      continue;
+    }
 
-      if (pendingLike && attempt < POLL_ATTEMPTS - 1) {
-        await sleep(POLL_DELAY_MS);
-        continue;
-      }
-
+    if (pendingLike) {
       await supabase
         .from('hmrc_calculations')
         .update({
-          status: pendingLike ? 'pending' : 'error',
+          status: 'pending',
+          updated_at: new Date().toISOString()
+        })
+        .eq('calculation_id', calculationId);
+
+      return res.status(200).json({
+        status: 'pending',
+        calculationId,
+        calculationType,
+        ...getHmrcMeta(retrieveResponse),
+        taxDue: null,
+        nic: null,
+        incomeSources: null,
+        allowances: null,
+        submissionDate,
+        errors: [],
+        disclaimer
+      });
+    }
+
+    const retrievePayload = await parseJsonSafely(retrieveResponse);
+
+    if (!retrieveResponse.ok) {
+      await supabase
+        .from('hmrc_calculations')
+        .update({
+          status: 'error',
           errors: [retrievePayload],
           raw_response: retrievePayload,
           updated_at: new Date().toISOString()
         })
         .eq('calculation_id', calculationId);
 
-      if (pendingLike) {
-        return res.status(202).json({
-          status: 'pending',
-          calculationId,
-          taxDue: null,
-          nic: null,
-          incomeSources: null,
-          allowances: null,
-          submissionDate,
-          errors: [],
-          disclaimer
-        });
-      }
-
       return res.status(retrieveResponse.status).json({
         status: 'error',
         calculationId,
+        calculationType,
+        ...getHmrcMeta(retrieveResponse),
         taxDue: null,
         nic: null,
         incomeSources: null,
@@ -362,7 +408,12 @@ async function triggerCalculation(req, res, context) {
     }
 
     const summary = extractCalculationSummary(retrievePayload);
-    const status = summary.errors.length ? 'error' : 'complete';
+    const status = summary.hasValidationErrors ? 'error' : 'complete';
+    const resolvedSubmissionDate =
+      retrievePayload?.metadata?.calculationTimestamp ||
+      retrievePayload?.calculationTimestamp ||
+      submissionDate;
+    const resolvedDisclaimer = getCalculationDisclaimer(calculationType, resolvedSubmissionDate);
 
     await supabase
       .from('hmrc_calculations')
@@ -372,29 +423,38 @@ async function triggerCalculation(req, res, context) {
         nic: summary.nic,
         income_sources: summary.incomeSources,
         allowances: summary.allowances,
-        submission_date: submissionDate,
+        submission_date: resolvedSubmissionDate,
         errors: summary.errors,
+        disclaimer: resolvedDisclaimer,
         raw_response: retrievePayload,
-        updated_at: submissionDate
+        updated_at: new Date().toISOString()
       })
       .eq('calculation_id', calculationId);
 
     return res.status(200).json({
       status,
       calculationId,
+      calculationType,
+      ...getHmrcMeta(retrieveResponse),
       taxDue: summary.taxDue,
-        nic: summary.nic,
-        incomeSources: summary.incomeSources,
-        allowances: summary.allowances,
-        submissionDate,
-        errors: summary.errors,
-        disclaimer
-      });
+      nic: summary.nic,
+      incomeSources: summary.incomeSources,
+      allowances: summary.allowances,
+      submissionDate: resolvedSubmissionDate,
+      errors: summary.errors,
+      disclaimer: resolvedDisclaimer,
+      metadata: retrievePayload?.metadata || null,
+      calculation: retrievePayload?.calculation || null,
+      messages: retrievePayload?.messages || null
+    });
   }
 
-  return res.status(202).json({
+  return res.status(200).json({
     status: 'pending',
     calculationId,
+    calculationType,
+    hmrcStatusCode: 404,
+    correlationId: null,
     taxDue: null,
     nic: null,
     incomeSources: null,
@@ -402,6 +462,68 @@ async function triggerCalculation(req, res, context) {
     submissionDate,
     errors: [],
     disclaimer
+  });
+}
+
+async function submitFinalDeclaration(req, res, context) {
+  const { taxYear, calculationId, calculationType } = req.body;
+  const confirmationType = calculationType || 'final-declaration';
+
+  if (!taxYear || !calculationId) {
+    return res.status(400).json({ error: 'taxYear and calculationId are required' });
+  }
+
+  if (confirmationType !== 'final-declaration' && confirmationType !== 'confirm-amendment') {
+    return res.status(400).json({ error: 'Invalid final declaration type' });
+  }
+
+  const response = await hmrcFetch(
+    `https://test-api.service.hmrc.gov.uk/individuals/calculations/${context.driver.nino}/self-assessment/${taxYear}/${calculationId}/${confirmationType}`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/vnd.hmrc.8.0+json',
+        'Gov-Test-Scenario': 'DEFAULT'
+      }
+    },
+    context
+  );
+
+  let payload = null;
+
+  if (response.status !== 204) {
+    payload = await response.json();
+  }
+
+  if (!response.ok && response.status !== 204) {
+    return res.status(response.status).json({
+      error: payload?.message || payload?.error || 'Could not submit the HMRC final declaration.',
+      details: payload,
+      ...getHmrcMeta(response)
+    });
+  }
+
+  const confirmedAt = new Date().toISOString();
+
+  await supabase
+    .from('hmrc_calculations')
+    .update({
+      status: confirmationType,
+      updated_at: confirmedAt,
+      raw_response: {
+        finalDeclarationSubmittedAt: confirmedAt,
+        calculationType: confirmationType
+      }
+    })
+    .eq('calculation_id', calculationId);
+
+  return res.status(200).json({
+    success: true,
+    status: confirmationType,
+    calculationId,
+    calculationType: confirmationType,
+    submittedAt: confirmedAt,
+    ...getHmrcMeta(response)
   });
 }
 
@@ -419,6 +541,10 @@ export default async function handler(req, res) {
 
     if (req.method === 'POST') {
       return triggerCalculation(req, res, context);
+    }
+
+    if (req.method === 'PUT') {
+      return submitFinalDeclaration(req, res, context);
     }
 
     return res.status(405).json({ error: 'Method not allowed' });

@@ -15,18 +15,33 @@ const isPeriodSubmitted = (period, submissionHistory) =>
 const isPeriodFulfilled = (period, submissionHistory) =>
   period.status === 'fulfilled' || isPeriodSubmitted(period, submissionHistory)
 
+function deriveTaxYear(periods) {
+  const sorted = sortPeriods(periods)
+  if (!sorted.length || !sorted[0].start) return null
+  const year = sorted[0].start.slice(0, 4)
+  return `${year}-${String(Number(year) + 1).slice(-2)}`
+}
+
 export default function HmrcSubmit() {
   const router = useRouter()
   const [driver, setDriver] = useState(null)
   const [allPeriods, setAllPeriods] = useState([])
   const [openPeriod, setOpenPeriod] = useState(null)
   const [previousSubmission, setPreviousSubmission] = useState(null)
-  const [existingSubmission, setExistingSubmission] = useState(null)
+  const [baselineRequired, setBaselineRequired] = useState(false)
+  const [currentHmrcSummary, setCurrentHmrcSummary] = useState(null)
+  const [isLoadingSummary, setIsLoadingSummary] = useState(false)
+  const [baselinePeriod, setBaselinePeriod] = useState(null)
+  const [openingTurnover, setOpeningTurnover] = useState('')
+  const [openingExpenses, setOpeningExpenses] = useState('')
+  const [taxYear, setTaxYear] = useState('')
   const [turnover, setTurnover] = useState('')
   const [expenses, setExpenses] = useState('')
   const [status, setStatus] = useState({ type: '', text: '' })
   const [result, setResult] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [calculation, setCalculation] = useState(null)
+  const [isCalculating, setIsCalculating] = useState(false)
 
   async function loadSubmissionState(currentDriver) {
     const { data: savedSubmissions, error: savedSubmissionsError } = await supabase
@@ -78,16 +93,21 @@ export default function HmrcSubmit() {
     setAllPeriods(periods)
     setOpenPeriod(nextOpenPeriod || null)
 
+    const taxYear = deriveTaxYear(periods)
+    if (taxYear) setTaxYear(taxYear)
+
+    if (taxYear) {
+      setIsLoadingSummary(true)
+      fetch(`/api/hmrc/submitIncome?taxYear=${encodeURIComponent(taxYear)}`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      })
+        .then((r) => r.json())
+        .then((d) => setCurrentHmrcSummary(d.noData ? null : d))
+        .catch(() => setCurrentHmrcSummary(null))
+        .finally(() => setIsLoadingSummary(false))
+    }
+
     if (nextOpenPeriod) {
-      const currentSubmission =
-        history.find(
-          (submission) =>
-            submission.period_start === nextOpenPeriod.start &&
-            submission.period_end === nextOpenPeriod.end
-        ) || null
-
-      setExistingSubmission(currentSubmission)
-
       const nextPeriodIndex = sortedPeriods.findIndex(
         (period) => getPeriodKey(period) === getPeriodKey(nextOpenPeriod)
       )
@@ -109,11 +129,14 @@ export default function HmrcSubmit() {
           : null
 
       setPreviousSubmission(latestPreviousSubmission)
+      setBaselineRequired(Boolean(latestPreviousPeriod && !latestPreviousSubmission))
+      setBaselinePeriod(latestPreviousPeriod)
       return
     }
 
-    setExistingSubmission(null)
     setPreviousSubmission(history[0] || null)
+    setBaselineRequired(false)
+    setBaselinePeriod(null)
   }
 
   useEffect(() => {
@@ -140,8 +163,21 @@ export default function HmrcSubmit() {
     setStatus({ type: '', text: '' })
     setResult(null)
 
+    if (!taxYear.trim() || !/^\d{4}-\d{2}$/.test(taxYear.trim())) {
+      setStatus({ type: 'error', text: 'Enter a valid tax year in YYYY-YY format (e.g. 2025-26).' })
+      return
+    }
+
     if (!turnover.trim() || !expenses.trim()) {
       setStatus({ type: 'error', text: 'Enter turnover and expenses before submitting.' })
+      return
+    }
+
+    if (baselineRequired && hmrcBaseTurnover === null && (!openingTurnover.trim() || !openingExpenses.trim())) {
+      setStatus({
+        type: 'error',
+        text: 'Enter opening totals before submitting this cumulative update.'
+      })
       return
     }
 
@@ -164,7 +200,10 @@ export default function HmrcSubmit() {
       },
       body: JSON.stringify({
         turnover,
-        expenses
+        expenses,
+        taxYear,
+        openingTurnover: baselineRequired ? openingTurnover : undefined,
+        openingExpenses: baselineRequired ? openingExpenses : undefined
       })
     })
 
@@ -176,6 +215,12 @@ export default function HmrcSubmit() {
         text: data.error || 'HMRC submission failed.'
       })
       setResult(data.details || null)
+
+      if (data?.details?.reason === 'missing_opening_totals') {
+        setBaselineRequired(true)
+        setBaselinePeriod(data.details.previousFulfilledPeriod || null)
+      }
+
       setIsSubmitting(false)
       return
     }
@@ -187,8 +232,29 @@ export default function HmrcSubmit() {
     setResult(data)
     setTurnover('')
     setExpenses('')
+    setOpeningTurnover('')
+    setOpeningExpenses('')
     await loadSubmissionState(driver)
     setIsSubmitting(false)
+
+    setCalculation(null)
+    setIsCalculating(true)
+    try {
+      const calcResponse = await fetch('/api/hmrc/calculations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({ taxYear, calculationType: 'in-year' })
+      })
+      const calcData = await calcResponse.json()
+      setCalculation(calcData)
+    } catch {
+      setCalculation({ status: 'error', error: 'Could not retrieve tax estimate.' })
+    } finally {
+      setIsCalculating(false)
+    }
   }
 
   const formatDate = (value) => {
@@ -205,8 +271,14 @@ export default function HmrcSubmit() {
   const quarterLabel = getQuarterLabel(openPeriod, sortedPeriods)
   const enteredTurnover = Number(turnover) || 0
   const enteredExpenses = Number(expenses) || 0
-  const previousTurnover = Number(previousSubmission?.turnover || 0)
-  const previousExpenses = Number(previousSubmission?.expenses || 0)
+  const hmrcBaseTurnover = currentHmrcSummary != null ? (Number(currentHmrcSummary.periodIncome?.turnover) || 0) : null
+  const hmrcBaseExpenses = currentHmrcSummary != null
+    ? (currentHmrcSummary.periodExpenses?.consolidatedExpenses != null
+        ? Number(currentHmrcSummary.periodExpenses.consolidatedExpenses)
+        : Object.values(currentHmrcSummary.periodExpenses || {}).reduce((s, v) => s + Number(v || 0), 0))
+    : null
+  const previousTurnover = hmrcBaseTurnover ?? Number(previousSubmission?.turnover || (baselineRequired ? Number(openingTurnover) || 0 : 0))
+  const previousExpenses = hmrcBaseExpenses ?? Number(previousSubmission?.expenses || (baselineRequired ? Number(openingExpenses) || 0 : 0))
   const reviewTurnover = previousTurnover + enteredTurnover
   const reviewExpenses = previousExpenses + enteredExpenses
   const formatMoney = (value) =>
@@ -297,9 +369,11 @@ export default function HmrcSubmit() {
                   </div>
                 </div>
 
-                {existingSubmission && (
+                {baselineRequired && hmrcBaseTurnover === null && (
                   <div className={styles.duplicateNotice}>
-                    {quarterLabel} already submitted.
+                    {baselinePeriod
+                      ? `${getQuarterLabel(baselinePeriod, sortedPeriods)} is already fulfilled in HMRC, but no local totals were saved. Enter opening totals so we can continue cumulative submissions safely.`
+                      : 'A prior fulfilled period exists in HMRC, but no local totals were saved. Enter opening totals so we can continue cumulative submissions safely.'}
                   </div>
                 )}
               </>
@@ -310,6 +384,36 @@ export default function HmrcSubmit() {
             )}
           </div>
 
+          <div className={styles.hmrcSummaryCard}>
+            <p className={styles.sectionEyebrow}>Currently held by HMRC</p>
+            {isLoadingSummary ? (
+              <p className={styles.summaryLoading}>Loading HMRC summary...</p>
+            ) : currentHmrcSummary ? (
+              <>
+                {currentHmrcSummary.periodDates?.periodStartDate && (
+                  <p className={styles.summaryPeriod}>
+                    {formatDate(currentHmrcSummary.periodDates.periodStartDate)} to {formatDate(currentHmrcSummary.periodDates.periodEndDate)}
+                  </p>
+                )}
+                <div className={styles.summaryGrid}>
+                  <div>
+                    <span className={styles.label}>Turnover</span>
+                    <strong>{formatMoney(currentHmrcSummary.periodIncome?.turnover || 0)}</strong>
+                  </div>
+                  <div>
+                    <span className={styles.label}>Expenses</span>
+                    <strong>{formatMoney(
+                      currentHmrcSummary.periodExpenses?.consolidatedExpenses ??
+                      Object.values(currentHmrcSummary.periodExpenses || {}).reduce((s, v) => s + Number(v || 0), 0)
+                    )}</strong>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className={styles.summaryLoading}>Nothing submitted to HMRC yet for this tax year.</p>
+            )}
+          </div>
+
           {status.text && (
             <div className={status.type === 'error' ? styles.error : styles.success}>
               {status.text}
@@ -317,6 +421,17 @@ export default function HmrcSubmit() {
           )}
 
           <form onSubmit={handleSubmit} className={styles.form}>
+            <div className={styles.field}>
+              <label htmlFor="taxYear">Tax year</label>
+              <input
+                id="taxYear"
+                type="text"
+                value={taxYear}
+                onChange={(event) => setTaxYear(event.target.value)}
+                placeholder="e.g. 2025-26"
+              />
+            </div>
+
             <div className={styles.field}>
               <label htmlFor="turnover">Enter turnover</label>
               <input
@@ -341,7 +456,35 @@ export default function HmrcSubmit() {
               />
             </div>
 
-            {openPeriod && !existingSubmission && (
+            {baselineRequired && hmrcBaseTurnover === null && (
+              <>
+                <div className={styles.field}>
+                  <label htmlFor="openingTurnover">Submitted income so far (opening total)</label>
+                  <input
+                    id="openingTurnover"
+                    type="number"
+                    step="0.01"
+                    value={openingTurnover}
+                    onChange={(event) => setOpeningTurnover(event.target.value)}
+                    placeholder="Enter opening cumulative income"
+                  />
+                </div>
+
+                <div className={styles.field}>
+                  <label htmlFor="openingExpenses">Submitted expenses so far (opening total)</label>
+                  <input
+                    id="openingExpenses"
+                    type="number"
+                    step="0.01"
+                    value={openingExpenses}
+                    onChange={(event) => setOpeningExpenses(event.target.value)}
+                    placeholder="Enter opening cumulative expenses"
+                  />
+                </div>
+              </>
+            )}
+
+            {openPeriod && (
               <div className={styles.reviewCard}>
                 <div className={styles.reviewHeader}>
                   <p className={styles.sectionEyebrow}>Review</p>
@@ -382,7 +525,7 @@ export default function HmrcSubmit() {
               <button
                 type="submit"
                 className={styles.primaryBtn}
-                disabled={isSubmitting || !driver?.nino || !openPeriod || !!existingSubmission}
+                disabled={isSubmitting || !driver?.nino || !openPeriod}
               >
                 {isSubmitting ? 'Submitting...' : 'Submit to HMRC'}
               </button>
@@ -426,6 +569,35 @@ export default function HmrcSubmit() {
                 </div>
               ) : (
                 <pre>{JSON.stringify(result, null, 2)}</pre>
+              )}
+
+              {status.type === 'success' && (isCalculating || calculation) && (
+                <div className={styles.calculationPanel}>
+                  <p className={styles.sectionEyebrow}>Tax estimate</p>
+                  {isCalculating ? (
+                    <p className={styles.summaryLoading}>Running tax calculation — this may take a few seconds...</p>
+                  ) : calculation?.status === 'complete' ? (
+                    <>
+                      <div className={styles.confirmationGrid}>
+                        <div>
+                          <span className={styles.label}>Estimated tax due</span>
+                          <strong>{calculation.taxDue != null ? formatMoney(calculation.taxDue) : 'Not available'}</strong>
+                        </div>
+                        <div>
+                          <span className={styles.label}>NIC</span>
+                          <strong>{calculation.nic != null ? formatMoney(calculation.nic) : 'Not available'}</strong>
+                        </div>
+                      </div>
+                      <p className={styles.disclaimerText}>
+                        Based on information HMRC has received so far. This estimate may change as more information is received.
+                      </p>
+                    </>
+                  ) : calculation?.status === 'pending' ? (
+                    <p className={styles.summaryLoading}>HMRC is still processing the calculation. Check back shortly on the calculations page.</p>
+                  ) : (
+                    <p className={styles.summaryLoading}>{calculation?.error || 'Tax estimate unavailable.'}</p>
+                  )}
+                </div>
               )}
 
               {status.type === 'success' && (

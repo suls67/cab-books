@@ -1,0 +1,335 @@
+/* ── Screen layout ── */
+.page {
+  min-height: 100vh;
+  background: #f3f4f6;
+  padding-bottom: 40px;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-size: 0.9375rem;
+  color: #6b7280;
+}
+
+/* ── Action bar (screen only) ── */
+.actionBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  gap: 12px;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.backBtn {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #6b7280;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px 0;
+  transition: color 0.12s;
+}
+
+.backBtn:hover { color: #111827; }
+
+.actionBtns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shareBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.shareBtn:hover { background: #e5e7eb; }
+
+.whatsappBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #25d366;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.whatsappBtn:hover { background: #1ebe5d; }
+
+.downloadBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #16a34a;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.downloadBtn:hover { background: #15803d; }
+
+.printBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #111827;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.printBtn:hover { background: #1f2937; }
+
+/* ── Invoice document ── */
+.document {
+  max-width: 794px; /* A4 width at 96dpi */
+  margin: 32px auto;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 56px 64px;
+  font-size: 0.9375rem;
+  color: #111827;
+  line-height: 1.5;
+}
+
+/* From block */
+.docHeader { margin-bottom: 40px; }
+
+.fromName {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #16a34a;
+  margin-bottom: 4px;
+}
+
+.fromDetail {
+  font-size: 0.875rem;
+  color: #374151;
+}
+
+.fromDetailMuted {
+  font-size: 0.8125rem;
+  color: #d1d5db;
+  font-style: italic;
+}
+
+/* Invoice meta */
+.metaRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 36px;
+  gap: 24px;
+}
+
+.metaBlock {}
+
+.metaLabel {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.metaValue {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.metaSmall {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+/* Trips table */
+.tripsSection { margin-bottom: 24px; }
+
+.tripsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.tripsTable thead tr {
+  background: #dbeafe;
+}
+
+.tripsTable th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #1e40af;
+}
+
+.tripsTable td {
+  padding: 10px 12px;
+  color: #374151;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.tripsTable tbody tr:last-child td { border-bottom: none; }
+
+/* Divider */
+.divider {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 20px 0;
+}
+
+/* Charges */
+.chargesSection { margin-bottom: 4px; }
+
+.chargeRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid #f9fafb;
+}
+
+.chargeRow:last-child { border-bottom: none; }
+
+.chargeDesc {
+  font-size: 0.9375rem;
+  color: #111827;
+}
+
+.chargeAmount {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+/* Totals */
+.totalsSection {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 32px;
+}
+
+.totalRow {
+  display: flex;
+  gap: 48px;
+  align-items: center;
+}
+
+.totalRowFinal {
+  display: flex;
+  gap: 48px;
+  align-items: center;
+}
+
+.subtotalLabel { font-size: 0.9375rem; color: #6b7280; font-weight: 500; }
+.subtotalValue { font-size: 0.9375rem; color: #6b7280; font-weight: 600; min-width: 80px; text-align: right; }
+
+.totalLabel { font-size: 1.125rem; font-weight: 700; color: #111827; }
+.totalValue { font-size: 1.5rem; font-weight: 800; color: #111827; min-width: 80px; text-align: right; }
+
+/* Bank details */
+.bankSection {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 24px;
+  margin-bottom: 24px;
+}
+
+.bankTitle {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 10px;
+}
+
+.bankRow {
+  display: flex;
+  gap: 16px;
+  font-size: 0.875rem;
+  margin-bottom: 4px;
+}
+
+.bankLabel { color: #6b7280; min-width: 130px; }
+.bankValue { color: #111827; font-weight: 500; }
+
+/* Notes */
+.notesSection {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 20px;
+}
+
+.notesText {
+  font-size: 0.875rem;
+  color: #6b7280;
+  white-space: pre-wrap;
+}
+
+/* ── Print styles ── */
+@media print {
+  .actionBar { display: none !important; }
+
+  .page {
+    background: #ffffff;
+    padding: 0;
+  }
+
+  .document {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    padding: 20mm 20mm;
+    max-width: 100%;
+    box-shadow: none;
+  }
+
+  .fromName { color: #000000; }
+}
+
+@media (max-width: 640px) {
+  .document { padding: 32px 24px; }
+  .actionBar { padding: 12px 16px; }
+  .metaRow { flex-direction: column; gap: 16px; }
+  .tripsTable { font-size: 0.75rem; }
+  .tripsTable th, .tripsTable td { padding: 6px 8px; }
+}

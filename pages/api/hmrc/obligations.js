@@ -1,6 +1,14 @@
 import { getAccessTokenFromRequest, getDriverFromAccessToken } from '../../../lib/driverAuth';
-import { supabase } from '../../../supabaseClient';
 import { refreshToken } from '../../../lib/hmrc/refreshToken';
+import { supabase } from '../../../supabaseClient';
+
+const HMRC_BASE = 'https://test-api.service.hmrc.gov.uk';
+
+function normaliseStatus(raw) {
+  if (raw === 'F') return 'fulfilled';
+  if (raw === 'O') return 'open';
+  return raw?.toLowerCase() || 'unknown';
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -11,18 +19,14 @@ export default async function handler(req, res) {
     const accessToken = getAccessTokenFromRequest(req);
     const currentDriver = await getDriverFromAccessToken(supabase, accessToken);
 
-    // Get driver
     const { data: driver, error: driverError } = await supabase
       .from('drivers')
       .select('nino')
       .eq('id', currentDriver.id)
       .maybeSingle();
 
-    if (driverError || !driver) {
-      throw new Error('Driver not found');
-    }
+    if (driverError || !driver) throw new Error('Driver not found');
 
-    // Get token
     const { data: tokenData, error: tokenError } = await supabase
       .from('hmrc_tokens')
       .select('*')
@@ -31,64 +35,85 @@ export default async function handler(req, res) {
       .limit(1)
       .maybeSingle();
 
-    if (tokenError || !tokenData) {
-      throw new Error('HMRC token not found');
-    }
+    if (tokenError || !tokenData) throw new Error('HMRC token not found');
 
-    let access_token = tokenData.access_token;
-
-    // Refresh if expired
+    let hmrcToken = tokenData.access_token;
     if (!tokenData.expires_at || new Date(tokenData.expires_at) < new Date()) {
-      access_token = await refreshToken(tokenData, currentDriver.id, supabase);
+      hmrcToken = await refreshToken(tokenData, currentDriver.id, supabase);
     }
 
-    // Get businessId dynamically
-    const businessResponse = await fetch(
-      `https://test-api.service.hmrc.gov.uk/individuals/business/details/${driver.nino}/list`,
+    // Step 1: get businessId
+    const businessRes = await fetch(
+      `${HMRC_BASE}/individuals/business/details/${driver.nino}/list`,
       {
-        method: 'GET',
         headers: {
-          Authorization: `Bearer ${access_token}`,
+          Authorization: `Bearer ${hmrcToken}`,
           Accept: 'application/vnd.hmrc.2.0+json',
           'Gov-Test-Scenario': 'DEFAULT'
         }
       }
     );
 
-    const businessData = await businessResponse.json();
+    const businessData = await businessRes.json();
+    const businessId = businessData?.listOfBusinesses?.[0]?.businessId;
+    if (!businessId) throw new Error('No business found for this driver');
 
-    const businessId = businessData.listOfBusinesses[0].businessId;
-
-    // Call HMRC obligations API
-    const response = await fetch(
-      `https://test-api.service.hmrc.gov.uk/obligations/details/${driver.nino}/income-and-expenditure?typeOfBusiness=self-employment&businessId=${businessId}`,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${access_token}`,
-          Accept: 'application/vnd.hmrc.3.0+json',
-          'Gov-Test-Scenario': 'DEFAULT'
+    // Step 2: fetch quarterly + crystallisation obligations in parallel
+    const [quarterlyRes, crystallisationRes] = await Promise.all([
+      fetch(
+        `${HMRC_BASE}/obligations/details/${driver.nino}/income-and-expenditure?typeOfBusiness=self-employment&businessId=${businessId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${hmrcToken}`,
+            Accept: 'application/vnd.hmrc.3.0+json',
+            'Gov-Test-Scenario': 'DEFAULT'
+          }
         }
-      }
-    );
+      ),
+      fetch(
+        `${HMRC_BASE}/obligations/details/${driver.nino}/crystallisation`,
+        {
+          headers: {
+            Authorization: `Bearer ${hmrcToken}`,
+            Accept: 'application/vnd.hmrc.1.0+json',
+            'Gov-Test-Scenario': 'DEFAULT'
+          }
+        }
+      )
+    ]);
 
-    const result = await response.json();
+    const quarterlyData = await quarterlyRes.json();
+    const crystallisationData = crystallisationRes.ok ? await crystallisationRes.json() : null;
 
-    const obligation = result.obligations[0];
+    const obligation = quarterlyData?.obligations?.[0];
+    if (!obligation) {
+      return res.status(200).json({ businessId, periods: [], crystallisation: null });
+    }
 
-    const formatted = obligation.obligationDetails.map((item) => ({
+    const periods = (obligation.obligationDetails || []).map((item) => ({
       start: item.periodStartDate,
       end: item.periodEndDate,
       due: item.dueDate,
-      status: item.status
+      status: normaliseStatus(item.status)
     }));
 
-    res.status(200).json({
-      businessId: obligation.businessId,
-      periods: formatted
-    });
+    const crystallisationObligation = crystallisationData?.obligations?.[0]?.obligationDetails?.[0];
+    const crystallisation = crystallisationObligation
+      ? {
+          start: crystallisationObligation.inboundCorrespondenceFromDate || crystallisationObligation.periodStartDate || null,
+          end: crystallisationObligation.inboundCorrespondenceToDate || crystallisationObligation.periodEndDate || null,
+          due: crystallisationObligation.inboundCorrespondenceDueDate || crystallisationObligation.dueDate || null,
+          status: normaliseStatus(crystallisationObligation.status),
+          periodKey: crystallisationObligation.periodKey || null
+        }
+      : null;
 
+    return res.status(200).json({
+      businessId: obligation.businessId,
+      periods,
+      crystallisation
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 }

@@ -30,6 +30,43 @@ function getClientHeaders(driver) {
   }
 }
 
+function toReadable(key) {
+  return key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()).trim()
+}
+
+function moneyFmt(value) {
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number(value))
+}
+
+function TaxCalcSection({ data }) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
+  const entries = Object.entries(data)
+  const primitives = entries.filter(([, v]) => typeof v === 'number' && v !== 0 && v != null)
+  const groups = entries.filter(([, v]) => v && typeof v === 'object' && !Array.isArray(v))
+  if (!primitives.length && !groups.length) return null
+  return (
+    <>
+      {primitives.map(([key, val]) => (
+        <div key={key} className={styles.calcRow}>
+          <span className={styles.calcKey}>{toReadable(key)}</span>
+          <span className={styles.calcVal}>{moneyFmt(val)}</span>
+        </div>
+      ))}
+      {groups.map(([key, val]) => (
+        <div key={key} className={styles.calcGroup}>
+          <h4 className={styles.calcGroupTitle}>{toReadable(key)}</h4>
+          <TaxCalcSection data={val} />
+        </div>
+      ))}
+    </>
+  )
+}
+
 export default function HmrcCalculations() {
   const router = useRouter()
   const [driver, setDriver] = useState(null)
@@ -40,6 +77,8 @@ export default function HmrcCalculations() {
   const [status, setStatus] = useState({ type: '', text: '' })
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isFinalising, setIsFinalising] = useState(false)
+  const [confirmFinalDeclaration, setConfirmFinalDeclaration] = useState(false)
 
   useEffect(() => {
     async function loadDriver() {
@@ -155,6 +194,67 @@ export default function HmrcCalculations() {
     setIsSubmitting(false)
   }
 
+  async function handleFinalDeclaration() {
+    if (!selectedCalculation?.calculationId) {
+      setStatus({ type: 'error', text: 'No calculation is available to submit as a final declaration.' })
+      return
+    }
+
+    setStatus({ type: '', text: '' })
+    setIsFinalising(true)
+
+    const { data: sessionData } = await supabase.auth.getSession()
+    const accessToken = sessionData.session?.access_token
+
+    if (!accessToken) {
+      setStatus({ type: 'error', text: 'You need to be signed in before confirming the final declaration.' })
+      setIsFinalising(false)
+      return
+    }
+
+    const response = await fetch('/api/hmrc/calculations', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        ...getClientHeaders(driver)
+      },
+      body: JSON.stringify({
+        taxYear,
+        calculationId: selectedCalculation.calculationId,
+        calculationType: 'final-declaration'
+      })
+    })
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      setStatus({
+        type: 'error',
+        text: data.error || 'Could not submit the HMRC final declaration.'
+      })
+      setIsFinalising(false)
+      return
+    }
+
+    setSelectedCalculation((current) =>
+      current
+        ? {
+            ...current,
+            status: data.status,
+            finalDeclarationSubmittedAt: data.submittedAt
+          }
+        : current
+    )
+    setStatus({
+      type: 'success',
+      text: 'Final declaration submitted to HMRC successfully.'
+    })
+    setConfirmFinalDeclaration(false)
+    await fetchCalculations(taxYear, calculationType)
+    setIsFinalising(false)
+  }
+
   async function handleRetrieve(calculationId) {
     setStatus({ type: '', text: '' })
     setIsLoading(true)
@@ -218,25 +318,21 @@ export default function HmrcCalculations() {
           minute: '2-digit'
         }).format(new Date(value))
       : 'Not provided'
-  const getFriendlyDisclaimer = () => {
-    if (!selectedCalculation) return ''
-
-    if (
-      selectedCalculation.status &&
-      (calculationType === 'in-year' || calculationType === 'intent-to-finalise')
-    ) {
-      return `This calculation is based on information HMRC has received up to ${formatDateTime(selectedCalculation.submissionDate)}. It may change as more information is received.`
-    }
-
-    return selectedCalculation.disclaimer || ''
-  }
-  const groupedMessages = Array.isArray(selectedCalculation?.errors) ? selectedCalculation.errors : []
-  const infoMessages = groupedMessages.flatMap((group) => group?.info || [])
-  const warningMessages = groupedMessages.flatMap((group) => group?.warnings || [])
-  const errorMessages = groupedMessages.flatMap((group) => group?.errors || [])
+  const calcMessages = selectedCalculation?.messages || {}
+  const errorMessages = Array.isArray(calcMessages.errors) ? calcMessages.errors : []
+  const warningMessages = Array.isArray(calcMessages.warnings) ? calcMessages.warnings : []
+  const infoMessages = Array.isArray(calcMessages.info) ? calcMessages.info : []
   const hasWarnings = warningMessages.length > 0
-  const hasErrors = errorMessages.length > 0
-  const latestCalculations = calculations.slice(0, 3)
+  const hasErrors = errorMessages.length > 0 || selectedCalculation?.status === 'error'
+  const hasNoResults = hasErrors  // when validation errors exist, HMRC produces no calculation output
+  const deriveListStatus = (calc) => {
+    if (calc.finalDeclaration) return 'final'
+    if (calc.totalIncomeTaxAndNicsDue != null) return 'complete'
+    return 'pending'
+  }
+  const canSubmitFinalDeclaration =
+    selectedCalculation?.status === 'complete' &&
+    selectedCalculation?.calculationType === 'intent-to-finalise'
 
   const simplifyMessage = (text) => {
     if (!text) return ''
@@ -310,6 +406,8 @@ export default function HmrcCalculations() {
                 <option value="in-year">In-year</option>
                 <option value="intent-to-finalise">Intent to finalise</option>
                 <option value="intent-to-amend">Intent to amend</option>
+                <option value="final-declaration">Final declaration</option>
+                <option value="confirm-amendment">Confirm amendment</option>
               </select>
             </div>
 
@@ -333,36 +431,48 @@ export default function HmrcCalculations() {
             <div className={styles.listSection}>
               <div className={styles.sectionHeader}>
                 <p className={styles.sectionEyebrow}>Existing</p>
-                <h2>Recent calculations for {taxYear}</h2>
+                <h2>Calculations for {taxYear}</h2>
               </div>
 
-              <div className={styles.calculationList}>
-                {latestCalculations.map((calculation, index) => {
-                  const calculationId =
-                    calculation.calculationId || calculation.id || calculation.calculation_id
-
-                  return (
-                    <div key={calculationId || index} className={styles.calculationCard}>
-                      <div>
-                        <span className={styles.label}>Calculation</span>
-                        <strong>{index === 0 ? 'Latest calculation' : `Previous calculation ${index}`}</strong>
-                      </div>
-
-                      <div>
-                        <span className={styles.label}>Type</span>
-                        <strong>{calculation.calculationType || calculationType}</strong>
-                      </div>
-
-                      <button
-                        type="button"
-                        className={styles.inlineLink}
-                        onClick={() => handleRetrieve(calculationId)}
-                      >
-                        View details
-                      </button>
-                    </div>
-                  )
-                })}
+              <div className={styles.tableWrapper}>
+                <table className={styles.calcTable}>
+                  <thead>
+                    <tr>
+                      <th>Calculation ID</th>
+                      <th>Timestamp</th>
+                      <th>Type</th>
+                      <th>Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {calculations.map((calc) => {
+                      const id = calc.calculationId || calc.id || calc.calculation_id
+                      const status = deriveListStatus(calc)
+                      return (
+                        <tr key={id}>
+                          <td className={styles.idCell}>{id ? `${id.slice(0, 8)}…` : '—'}</td>
+                          <td>{calc.calculationTimestamp ? formatDateTime(calc.calculationTimestamp) : '—'}</td>
+                          <td>{calc.calculationType || '—'}</td>
+                          <td>
+                            <span className={styles[`badge_${status}`] || styles.badge_pending}>
+                              {status}
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className={styles.inlineLink}
+                              onClick={() => handleRetrieve(id)}
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -374,6 +484,30 @@ export default function HmrcCalculations() {
                 <h2>Calculation details</h2>
               </div>
 
+              {/* Disclaimer — only shown when results exist and type requires it */}
+              {!hasNoResults &&
+                (selectedCalculation.calculationType === 'in-year' ||
+                  selectedCalculation.calculationType === 'intent-to-finalise') && (
+                <div className={styles.disclaimerBlock}>
+                  This calculation is only based on information HMRC has received about your income
+                  and expenses up to{' '}
+                  {selectedCalculation.metadata?.periodTo
+                    ? formatDateTime(selectedCalculation.metadata.periodTo)
+                    : 'the date of your last submission'}
+                  . It does not include anything submitted after that date and may change as HMRC
+                  receives further information.
+                </div>
+              )}
+
+              {/* Validation error banner — no calculation results produced */}
+              {hasNoResults && (
+                <div className={styles.error}>
+                  <strong>No calculation results produced.</strong> HMRC found validation errors in
+                  your submitted data. You must fix the errors below, resubmit the affected
+                  periods, and then re-trigger the calculation.
+                </div>
+              )}
+
               <div className={styles.resultGrid}>
                 <div>
                   <span className={styles.label}>Status</span>
@@ -381,27 +515,63 @@ export default function HmrcCalculations() {
                 </div>
 
                 <div>
-                  <span className={styles.label}>Based on data up to</span>
-                  <strong>{formatDateTime(selectedCalculation.submissionDate)}</strong>
+                  <span className={styles.label}>Type</span>
+                  <strong>{selectedCalculation.calculationType || '—'}</strong>
                 </div>
 
-                {!hasErrors && (
-                  <>
-                    <div>
-                      <span className={styles.label}>Tax due</span>
-                      <strong>{formatMoney(selectedCalculation.taxDue)}</strong>
-                    </div>
-
-                    <div>
-                      <span className={styles.label}>NIC</span>
-                      <strong>{formatMoney(selectedCalculation.nic)}</strong>
-                    </div>
-                  </>
+                {!hasNoResults && (
+                  <div>
+                    <span className={styles.label}>Based on data up to</span>
+                    <strong>
+                      {selectedCalculation.metadata?.periodTo
+                        ? formatDateTime(selectedCalculation.metadata.periodTo)
+                        : 'Last submission date'}
+                    </strong>
+                  </div>
                 )}
+
+                <div>
+                  <span className={styles.label}>Calculation ID</span>
+                  <strong className={styles.monoText}>{selectedCalculation.calculationId || '—'}</strong>
+                </div>
               </div>
 
-              {getFriendlyDisclaimer() && (
-                <div className={styles.disclaimerBlock}>{getFriendlyDisclaimer()}</div>
+              {selectedCalculation.finalDeclarationSubmittedAt && (
+                <div className={styles.confirmationBanner}>
+                  Final declaration submitted on{' '}
+                  {formatDateTime(selectedCalculation.finalDeclarationSubmittedAt)}.
+                </div>
+              )}
+
+              {canSubmitFinalDeclaration && (
+                <div className={styles.finalDeclarationPanel}>
+                  <p className={styles.sectionEyebrow}>Final declaration</p>
+                  <h3>Ready to confirm this calculation</h3>
+                  <p className={styles.nextStepText}>
+                    Only send this once you have reviewed the figures and you are happy to confirm
+                    them with HMRC.
+                  </p>
+
+                  <label className={styles.checkboxRow}>
+                    <input
+                      type="checkbox"
+                      checked={confirmFinalDeclaration}
+                      onChange={(event) => setConfirmFinalDeclaration(event.target.checked)}
+                    />
+                    <span>I have reviewed this calculation and want to submit the final declaration to HMRC.</span>
+                  </label>
+
+                  <div className={styles.nextStepActions}>
+                    <button
+                      type="button"
+                      className={styles.primaryBtn}
+                      onClick={handleFinalDeclaration}
+                      disabled={!confirmFinalDeclaration || isFinalising}
+                    >
+                      {isFinalising ? 'Submitting final declaration...' : 'Submit final declaration'}
+                    </button>
+                  </div>
+                </div>
               )}
 
               {(hasWarnings || hasErrors || selectedCalculation.status === 'pending') && (
@@ -412,21 +582,22 @@ export default function HmrcCalculations() {
                   {selectedCalculation.status === 'pending' && (
                     <p className={styles.nextStepText}>
                       HMRC is still processing this calculation. Give it a little more time, then
-                      use `View existing calculations` and open the latest calculation again.
-                    </p>
-                  )}
-
-                  {hasWarnings && (
-                    <p className={styles.nextStepText}>
-                      HMRC has returned warnings. Review your obligations and quarterly submissions
-                      to make sure there are no missing updates before relying on this result.
+                      use &ldquo;View existing calculations&rdquo; and open the latest calculation again.
                     </p>
                   )}
 
                   {hasErrors && (
                     <p className={styles.nextStepText}>
-                      You need to complete all required submissions before HMRC can calculate your
-                      tax. Go to obligations and submit missing periods.
+                      HMRC returned validation errors — no tax figures were produced. Fix the errors
+                      shown below by amending the affected submissions, then come back and run a new
+                      calculation.
+                    </p>
+                  )}
+
+                  {hasWarnings && !hasErrors && (
+                    <p className={styles.nextStepText}>
+                      HMRC has returned warnings. Review your obligations and quarterly submissions
+                      to make sure there are no missing updates before relying on this result.
                     </p>
                   )}
 
@@ -436,21 +607,28 @@ export default function HmrcCalculations() {
                     </Link>
 
                     <Link href="/hmrc-submit" className={styles.primaryBtn}>
-                      Submit next update
+                      {hasErrors ? 'Resubmit amended figures' : 'Submit next update'}
                     </Link>
                   </div>
                 </div>
               )}
 
-              {selectedCalculation.errors?.length > 0 ? (
+              {selectedCalculation.calculation?.taxCalculation && (
+                <div className={styles.calcSection}>
+                  <p className={styles.sectionEyebrow}>Tax summary</p>
+                  <TaxCalcSection data={selectedCalculation.calculation.taxCalculation} />
+                </div>
+              )}
+
+              {(errorMessages.length > 0 || warningMessages.length > 0 || infoMessages.length > 0) ? (
                 <div className={styles.messageStack}>
-                  {infoMessages.length > 0 && (
-                    <div className={styles.infoBlock}>
-                      <h3>Info</h3>
+                  {errorMessages.length > 0 && (
+                    <div className={styles.errorBlock}>
+                      <h3>Errors</h3>
                       <div className={styles.messageList}>
-                        {infoMessages.map((item, index) => (
-                          <div key={`info-${item.id}-${index}`} className={styles.messageItem}>
-                            <strong>Information</strong>
+                        {errorMessages.map((item, index) => (
+                          <div key={`error-${item.id || index}`} className={styles.messageItem}>
+                            <strong>Error</strong>
                             <p>{simplifyMessage(item.text)}</p>
                           </div>
                         ))}
@@ -463,7 +641,7 @@ export default function HmrcCalculations() {
                       <h3>Warnings</h3>
                       <div className={styles.messageList}>
                         {warningMessages.map((item, index) => (
-                          <div key={`warning-${item.id}-${index}`} className={styles.messageItem}>
+                          <div key={`warning-${item.id || index}`} className={styles.messageItem}>
                             <strong>Warning</strong>
                             <p>{simplifyMessage(item.text)}</p>
                           </div>
@@ -472,13 +650,13 @@ export default function HmrcCalculations() {
                     </div>
                   )}
 
-                  {errorMessages.length > 0 && (
-                    <div className={styles.errorBlock}>
-                      <h3>Errors</h3>
+                  {infoMessages.length > 0 && (
+                    <div className={styles.infoBlock}>
+                      <h3>Info</h3>
                       <div className={styles.messageList}>
-                        {errorMessages.map((item, index) => (
-                          <div key={`error-${item.id}-${index}`} className={styles.messageItem}>
-                            <strong>Error</strong>
+                        {infoMessages.map((item, index) => (
+                          <div key={`info-${item.id || index}`} className={styles.messageItem}>
+                            <strong>Information</strong>
                             <p>{simplifyMessage(item.text)}</p>
                           </div>
                         ))}
@@ -486,16 +664,11 @@ export default function HmrcCalculations() {
                     </div>
                   )}
                 </div>
-              ) : (
+              ) : selectedCalculation.status === 'complete' ? (
                 <div className={styles.payloadBlock}>
-                  <h3>Calculation output</h3>
-                  <pre>{JSON.stringify({
-                    incomeSources: selectedCalculation.incomeSources,
-                    allowances: selectedCalculation.allowances,
-                    submissionDate: selectedCalculation.submissionDate
-                  }, null, 2)}</pre>
+                  <p>No messages from HMRC for this calculation.</p>
                 </div>
-              )}
+              ) : null}
             </div>
           )}
         </div>

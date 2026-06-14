@@ -1,9 +1,11 @@
 import { getAccessTokenFromRequest, getDriverFromAccessToken } from '../../../lib/driverAuth';
-import { getNextOpenPeriod } from '../../../lib/hmrcPeriods';
+import { getHmrcFraudPreventionHeaders } from '../../../lib/hmrc/fraudHeaders';
+import { getNextOpenPeriod, getPeriodKey, sortPeriods } from '../../../lib/hmrcPeriods';
 import { supabase } from '../../../supabaseClient';
 import { refreshToken } from '../../../lib/hmrc/refreshToken';
 
 const HMRC_MAX_VALUE = 99999999999.99;
+const TAX_YEAR_PATTERN = /^\d{4}-\d{2}$/;
 
 const isPeriodSubmitted = (period, submissionHistory) =>
   submissionHistory.some(
@@ -14,19 +16,123 @@ const isPeriodSubmitted = (period, submissionHistory) =>
 const isPeriodFulfilled = (period, submissionHistory) =>
   period.status === 'fulfilled' || isPeriodSubmitted(period, submissionHistory);
 
-export default async function handler(req, res) {
-  if (req.method === 'GET') {
-    req.method = 'POST';
+function shiftEndDateToTaxYear(obligationEndDate, taxYear) {
+  const taxYearStart = Number(taxYear.slice(0, 4));
+  const [, mm, dd] = obligationEndDate.split('-');
+  const month = Number(mm);
+  const day = Number(dd);
+  const inEndYear = month < 4 || (month === 4 && day <= 5);
+  const targetYear = inEndYear ? taxYearStart + 1 : taxYearStart;
+  return `${targetYear}-${mm}-${dd}`;
+}
+
+async function getDriverAndToken(req) {
+  const accessToken = getAccessTokenFromRequest(req);
+  const currentDriver = await getDriverFromAccessToken(supabase, accessToken);
+
+  const { data: driver, error: driverError } = await supabase
+    .from('drivers')
+    .select('nino')
+    .eq('id', currentDriver.id)
+    .maybeSingle();
+
+  if (driverError || !driver) throw new Error('Driver not found');
+
+  const { data: tokenData, error: tokenError } = await supabase
+    .from('hmrc_tokens')
+    .select('*')
+    .eq('driver_id', currentDriver.id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (tokenError || !tokenData) throw new Error('HMRC token not found');
+
+  let hmrcToken = tokenData.access_token;
+  if (!tokenData.expires_at || new Date(tokenData.expires_at) < new Date()) {
+    hmrcToken = await refreshToken(tokenData, currentDriver.id, supabase);
   }
 
-  if (req.method !== 'POST') {
+  return { currentDriver, driver, hmrcToken };
+}
+
+async function getBusinessId(nino, hmrcToken) {
+  const response = await fetch(
+    `https://test-api.service.hmrc.gov.uk/individuals/business/details/${nino}/list`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${hmrcToken}`,
+        Accept: 'application/vnd.hmrc.2.0+json',
+        'Gov-Test-Scenario': 'DEFAULT'
+      }
+    }
+  );
+  const data = await response.json();
+  const businessId = data?.listOfBusinesses?.[0]?.businessId;
+  if (!response.ok || !businessId) throw new Error(data?.message || 'Could not load business details');
+  return businessId;
+}
+
+export default async function handler(req, res) {
+  if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
+    if (req.method === 'GET') {
+      const { taxYear } = req.query;
+
+      if (!taxYear || !TAX_YEAR_PATTERN.test(taxYear)) {
+        return res.status(400).json({ error: 'taxYear is required in the format YYYY-YY' });
+      }
+
+      const { driver, hmrcToken } = await getDriverAndToken(req);
+      const businessId = await getBusinessId(driver.nino, hmrcToken);
+
+      const hmrcRes = await fetch(
+        `https://test-api.service.hmrc.gov.uk/individuals/business/self-employment/${driver.nino}/${businessId}/cumulative/${taxYear}`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${hmrcToken}`,
+            Accept: 'application/vnd.hmrc.5.0+json',
+            'Gov-Test-Scenario': 'DEFAULT'
+          }
+        }
+      );
+
+      if (hmrcRes.status === 404) {
+        return res.status(200).json({ noData: true, taxYear });
+      }
+
+      const data = hmrcRes.status === 204 ? {} : await hmrcRes.json();
+
+      if (!hmrcRes.ok) {
+        return res.status(hmrcRes.status).json({
+          error: data?.message || data?.error || 'Could not retrieve cumulative summary from HMRC.',
+          details: data
+        });
+      }
+
+      return res.status(200).json({ taxYear, businessId, ...data });
+    }
+
     const accessToken = getAccessTokenFromRequest(req);
     const currentDriver = await getDriverFromAccessToken(supabase, accessToken);
-    const { turnover, expenses } = req.body;
+    const { turnover, expenses, openingTurnover, openingExpenses, taxYear } = req.body;
+
+    if (!taxYear || !TAX_YEAR_PATTERN.test(taxYear)) {
+      return res.status(400).json({ error: 'taxYear is required in the format YYYY-YY' });
+    }
+
+    const fraudHeaders = getHmrcFraudPreventionHeaders({
+      ...req,
+      headers: {
+        ...req.headers,
+        'x-hmrc-user-id': currentDriver.email || String(currentDriver.id)
+      }
+    });
 
     const { data: driver, error: driverError } = await supabase
       .from('drivers')
@@ -66,13 +172,16 @@ export default async function handler(req, res) {
         headers: {
           Authorization: `Bearer ${access_token}`,
           Accept: 'application/vnd.hmrc.2.0+json',
-          'Gov-Test-Scenario': 'DEFAULT'
+          'Gov-Test-Scenario': 'DEFAULT',
+          ...fraudHeaders
         }
       }
     );
 
     const businessData = await businessResponse.json();
-    const businessId = businessData.listOfBusinesses[0].businessId;
+    const firstBusiness = businessData.listOfBusinesses?.[0];
+    const businessId = firstBusiness?.businessId;
+    const businessType = firstBusiness?.typeOfBusiness;
 
     // get obligations
     const obligationsResponse = await fetch(
@@ -81,7 +190,8 @@ export default async function handler(req, res) {
         headers: {
           Authorization: `Bearer ${access_token}`,
           Accept: 'application/vnd.hmrc.3.0+json',
-          'Gov-Test-Scenario': 'DEFAULT'
+          'Gov-Test-Scenario': 'DEFAULT',
+          ...fraudHeaders
         }
       }
     );
@@ -97,10 +207,11 @@ export default async function handler(req, res) {
         due: item.dueDate,
         status: item.status
       }));
+    const sortedPeriods = sortPeriods(periods);
 
     const { data: existingSubmissions, error: existingSubmissionError } = await supabase
       .from('hmrc_submissions')
-      .select('id, submitted_at, period_id, period_start, period_end')
+      .select('id, submitted_at, period_id, period_start, period_end, turnover, expenses')
       .eq('driver_id', currentDriver.id)
       .order('submitted_at', { ascending: false });
 
@@ -110,28 +221,18 @@ export default async function handler(req, res) {
 
     const submissionHistory = existingSubmissions || [];
     const nextPendingPeriod =
-      getNextOpenPeriod(periods.filter((period) => !isPeriodFulfilled(period, submissionHistory))) ||
+      getNextOpenPeriod(sortedPeriods.filter((period) => !isPeriodFulfilled(period, submissionHistory))) ||
       null;
 
     if (!nextPendingPeriod) {
       throw new Error('No open obligations found (all already submitted)');
     }
 
-    const periodStartDate = nextPendingPeriod.start;
-    const periodEndDate = nextPendingPeriod.end;
-
-    const existingSubmission =
-      submissionHistory.find(
-        (submission) =>
-          submission.period_start === periodStartDate && submission.period_end === periodEndDate
-      ) || null;
-
-    if (existingSubmission) {
-      return res.status(409).json({
-        error: 'This obligation period has already been submitted. Any further change must go through an adjustment flow.',
-        details: existingSubmission
-      });
-    }
+    const periodStartDate = `${taxYear.slice(0, 4)}-04-06`;
+    const periodEndDate = shiftEndDateToTaxYear(nextPendingPeriod.end, taxYear);
+    const nextPeriodIndex = sortedPeriods.findIndex(
+      (period) => getPeriodKey(period) === getPeriodKey(nextPendingPeriod)
+    );
 
     //const turnover = 1000;
     //const expenses = 200;
@@ -150,21 +251,51 @@ export default async function handler(req, res) {
       throw new Error('Values cannot be negative');
     }
 
-    const { data: previousSubmissions, error: previousSubmissionError } = await supabase
-      .from('hmrc_submissions')
-      .select('turnover, expenses, period_start, period_end')
-      .eq('driver_id', currentDriver.id)
-      .lt('period_end', periodStartDate)
-      .order('period_end', { ascending: false })
-      .limit(1);
+    const previousFulfilledPeriods = sortedPeriods
+      .slice(0, nextPeriodIndex)
+      .filter((period) => isPeriodFulfilled(period, submissionHistory));
+    const latestPreviousPeriod = previousFulfilledPeriods[previousFulfilledPeriods.length - 1] || null;
+    const latestPreviousSubmission =
+      latestPreviousPeriod
+        ? submissionHistory.find(
+            (submission) =>
+              submission.period_start === latestPreviousPeriod.start &&
+              submission.period_end === latestPreviousPeriod.end
+          ) || null
+        : null;
+    const baselineRequired = Boolean(latestPreviousPeriod && !latestPreviousSubmission);
 
-    if (previousSubmissionError) {
-      throw new Error(`Could not load previous quarterly totals: ${previousSubmissionError.message}`);
+    if (baselineRequired) {
+      const enteredOpeningTurnover = Number(openingTurnover);
+      const enteredOpeningExpenses = Number(openingExpenses);
+
+      if (!Number.isFinite(enteredOpeningTurnover) || !Number.isFinite(enteredOpeningExpenses)) {
+        return res.status(409).json({
+          error: 'Opening totals are required before this cumulative submission can continue.',
+          details: {
+            reason: 'missing_opening_totals',
+            previousFulfilledPeriod: latestPreviousPeriod
+          }
+        });
+      }
+
+      if (enteredOpeningTurnover < 0 || enteredOpeningExpenses < 0) {
+        return res.status(400).json({
+          error: 'Opening totals cannot be negative.',
+          details: {
+            openingTurnover: enteredOpeningTurnover,
+            openingExpenses: enteredOpeningExpenses
+          }
+        });
+      }
     }
 
-    const previousSubmission = previousSubmissions?.[0] || null;
-    const previousTurnover = Number(previousSubmission?.turnover || 0);
-    const previousExpenses = Number(previousSubmission?.expenses || 0);
+    const previousTurnover = Number(
+      latestPreviousSubmission?.turnover || (baselineRequired ? Number(openingTurnover) : 0)
+    );
+    const previousExpenses = Number(
+      latestPreviousSubmission?.expenses || (baselineRequired ? Number(openingExpenses) : 0)
+    );
 
     if (!Number.isFinite(previousTurnover) || !Number.isFinite(previousExpenses)) {
       throw new Error('Previous submitted totals could not be read correctly.');
@@ -210,20 +341,21 @@ export default async function handler(req, res) {
     };
 
     const submissionResponse = await fetch(
-      `https://test-api.service.hmrc.gov.uk/individuals/business/self-employment/${driver.nino}/${businessId}/period`,
+      `https://test-api.service.hmrc.gov.uk/individuals/business/self-employment/${driver.nino}/${businessId}/cumulative/${taxYear}`,
       {
-        method: 'POST',
+        method: 'PUT',
         headers: {
           Authorization: `Bearer ${access_token}`,
           Accept: 'application/vnd.hmrc.5.0+json',
           'Content-Type': 'application/json',
-          'Gov-Test-Scenario': 'DEFAULT'
+          'Gov-Test-Scenario': 'DEFAULT',
+          ...fraudHeaders
         },
         body: JSON.stringify(hmrcPayload)
       }
     );
 
-    const submissionResult = await submissionResponse.json();
+    const submissionResult = submissionResponse.status === 204 ? {} : await submissionResponse.json();
 
     if (!submissionResponse.ok) {
       return res.status(400).json({
@@ -238,7 +370,9 @@ export default async function handler(req, res) {
             previousTurnover,
             previousExpenses,
             cumulativeTurnover: hmrcPayload.periodIncome.turnover,
-            cumulativeExpenses: hmrcPayload.periodExpenses.consolidatedExpenses
+            cumulativeExpenses: hmrcPayload.periodExpenses.consolidatedExpenses,
+            businessId,
+            businessType
           }
         }
       });
@@ -249,15 +383,17 @@ export default async function handler(req, res) {
     .insert([{
       driver_id: currentDriver.id,
       business_id: businessId,
-      period_id: submissionResult.periodId,
-      period_start: periodStartDate,
-      period_end: periodEndDate,
+      period_id: `${nextPendingPeriod.start}_${nextPendingPeriod.end}`,
+      period_start: nextPendingPeriod.start,
+      period_end: nextPendingPeriod.end,
       turnover: hmrcPayload.periodIncome.turnover,
       expenses: hmrcPayload.periodExpenses.consolidatedExpenses,
       hmrc_response: {
         ...submissionResult,
         quarterTurnover: enteredTurnover,
-        quarterExpenses: enteredExpenses
+        quarterExpenses: enteredExpenses,
+        hmrcPeriodStartDate: periodStartDate,
+        hmrcPeriodEndDate: periodEndDate
       }
     }]);
 
@@ -270,7 +406,6 @@ export default async function handler(req, res) {
 
   res.status(200).json({
     success: true,
-    periodId: submissionResult.periodId,
     businessId,
     periodStartDate,
     periodEndDate,

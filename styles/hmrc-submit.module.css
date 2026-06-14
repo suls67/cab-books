@@ -92,6 +92,45 @@
   line-height: 1.4;
 }
 
+.hmrcSummaryCard {
+  margin-bottom: 18px;
+  padding: 18px;
+  border-radius: 20px;
+  background: #ecfeff;
+  border: 1px solid rgba(6, 182, 212, 0.18);
+}
+
+.summaryPeriod {
+  margin: 4px 0 12px;
+  color: #0e7490;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.summaryGrid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summaryGrid strong {
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.summaryLoading {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
 .periodCard {
   margin-bottom: 18px;
   padding: 18px;
@@ -347,6 +386,21 @@
   word-break: break-word;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.calculationPanel {
+  margin-top: 20px;
+  padding: 18px;
+  border-radius: 18px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.disclaimerText {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
 }
 
 .resultActions {
