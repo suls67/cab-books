@@ -142,6 +142,7 @@
 .fromDetail {
   font-size: 0.875rem;
   color: #374151;
+  overflow-wrap: anywhere;
 }
 
 .fromDetailMuted {
